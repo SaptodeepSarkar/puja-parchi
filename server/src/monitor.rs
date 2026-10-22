@@ -83,6 +83,19 @@ pub struct LedgerState {
     pub at: String,
 }
 
+/// Whether the model servers were actually answering when last checked.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModelHealth {
+    pub vision: bool,
+    pub stt: bool,
+    pub at: String,
+}
+
+struct Checked {
+    at: Instant,
+    health: ModelHealth,
+}
+
 struct Job {
     id: String,
     label: String,
@@ -96,6 +109,7 @@ pub struct Monitor {
     running: Mutex<Vec<Job>>,
     metrics: Mutex<Metrics>,
     ledger: Mutex<Option<LedgerState>>,
+    models: Mutex<Option<Checked>>,
 }
 
 impl Default for Monitor {
@@ -113,6 +127,7 @@ impl Monitor {
             running: Mutex::new(Vec::new()),
             metrics: Mutex::new(Metrics::default()),
             ledger: Mutex::new(None),
+            models: Mutex::new(None),
         }
     }
 
@@ -184,6 +199,26 @@ impl Monitor {
 
     pub fn ledger(&self) -> Option<LedgerState> {
         self.ledger.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn set_models(&self, vision: bool, stt: bool) {
+        let health = ModelHealth {
+            vision,
+            stt,
+            at: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false),
+        };
+        *self.models.lock().unwrap_or_else(|e| e.into_inner()) = Some(Checked { at: Instant::now(), health });
+    }
+
+    /// The last check, or None when it is older than `max_age` so the caller
+    /// re-probes instead of showing a stale "ready".
+    pub fn models(&self, max_age: std::time::Duration) -> Option<ModelHealth> {
+        self.models
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .filter(|c| c.at.elapsed() <= max_age)
+            .map(|c| c.health.clone())
     }
 
     /// `since` is the last seq the page has seen; the reply carries only newer

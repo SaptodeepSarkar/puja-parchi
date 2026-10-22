@@ -122,3 +122,23 @@ pub fn stt_from_config(cfg: &Config) -> Arc<dyn Stt> {
         _ => Arc::new(NoStt),
     }
 }
+
+/// Is anything answering at this OpenAI-compatible base URL?
+///
+/// Any HTTP status counts: ollama answers 200 for `/models`, whisper.cpp answers
+/// 404 because it has no such route. Both mean the model server is up, which is
+/// the only thing this asks.
+pub async fn probe(base_url: &str) -> bool {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    client
+        .get(format!("{}/models", base_url.trim_end_matches('/')))
+        .send()
+        .await
+        .is_ok()
+}

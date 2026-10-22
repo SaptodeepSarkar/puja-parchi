@@ -34,7 +34,7 @@ for config (env vars), Docker (the target is one laptop, not a fleet).
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/api/health` | version, provider names, ledger path/presence, sticky book |
+| GET | `/api/health` | version, provider names, `vision_ready`/`stt_ready`, ledger path/presence, sticky book |
 | GET | `/api/book` | current book + recently used |
 | POST | `/api/book` | set the sticky book `{book}` |
 | POST | `/api/capture` | multipart: `image` (required), `audio`, `transcript`, `book`, `client_id` → `Draft` |
@@ -128,15 +128,34 @@ a navigation library (a tab enum), an image loader (one bitmap on the review scr
 point somewhere else (a local Whisper on `:8081` beside a local vision model on `:11434`).
 A host on this machine or the LAN needs **no API key**.
 
+`GET /api/health` also returns `vision_ready` / `stt_ready`: a live probe (cached 15 s) of
+whether the model server at each base URL actually answers, so the app and the console say
+"not answering" rather than "configured" for a model that was started and then died. The
+server does the same probe at boot and writes the result into the console event log
+(`reading model answering · gemma3:4b · http://127.0.0.1:11434/v1`).
+
 Cost note: one 1600 px stub plus a ~200-token answer is roughly 800–1200 image tokens per
 receipt on the small OpenAI vision models. At 300 receipts that is cents, not rupees —
 but it is the operator's key and the operator's choice, which is why `none` is the default,
 and why local models are the zero-cost option.
 
+### Local models (`scripts/models.sh`)
+
+`dev.sh` calls `scripts/models.sh up` first, so "start the server" means "the models are
+loaded". The script is idempotent (it probes `/models` on both base URLs, any HTTP status
+counts as up), keeps pid files in `data/run/`, logs to `data/logs/`, and warns when less
+than 1.5 GB of RAM is free. Ollama's model is preloaded with `keep_alive=15m`
+(`PUJA_KEEP_ALIVE`) so a busy spell stays warm and a quiet one gives the RAM back.
+
+Measured on the RTX 3050 / 12-core laptop: `gemma3:4b` 100% GPU, 2.9 GB VRAM, ~1.1 GB host
+RAM, ~5 s per stub warm (96 s cold). Whisper is CPU-only (no `nvcc`): `ggml-small.bin`
+~0.55 GB / ~3 s per 5.5 s clip, `ggml-large-v3-turbo.bin` ~1.7 GB / ~17 s. Small is the
+default for exactly that reason.
+
 ## Testing
 
 ```
-server:  53 unit tests + 15 API integration tests (real xlsx copy, fake provider)
+server:  54 unit tests + 15 API integration tests (real xlsx copy, fake provider)
 app:     vitest helpers, tsc --noEmit, vite build
 e2e:     Playwright, real browser: photo → 6 s screen → stop → review → push → row 311
 android: ./gradlew assembleDebug  (JDK 17 + Android SDK), installed with adb

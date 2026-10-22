@@ -109,3 +109,26 @@ Also fixed on the way: speech no longer forces `language=hi` (Whisper answered i
 Devanagari, which the English number parser cannot read), the clip's mime is taken from its
 bytes (WAV from the app, webm from the browser), and a model on `localhost`/LAN no longer
 demands a dummy API key.
+
+## Models on boot, and the memory they cost
+
+Started on the same day, after the first real capture worked. The stub and the clip used
+here are the real ones from 13:05 under `data/photos/18` and `data/audio/18`.
+
+| Change | Verified by |
+|---|---|
+| `scripts/models.sh` starts Ollama and whisper-server; `dev.sh` runs it first | all four processes killed, then `./scripts/dev.sh` → both model servers up, then `http 0.0.0.0:8080`; `models.sh status` reports both |
+| The server probes both endpoints at boot | console event log: `Reading model answering · gemma3:4b · http://127.0.0.1:11434/v1`, same for speech |
+| `/api/health` carries `vision_ready` / `stt_ready`; the console card distinguishes "not configured" from "not answering" | killed Ollama mid-run: console showed `NOT ANSWERING — start it with ./scripts/models.sh` while speech stayed `READY`; `models.sh up` flipped it back; phone Setup shows `openai · answering` for both |
+| A lone spoken number equal to the receipt the model read is treated as the receipt, not the amount | the real stub + real clip: before, the money column took the receipt number `₹866`; after, `receipt 866 (voice)`, `amount 201 (vision)`, with a warning naming the photo's reading |
+| Speech defaults to `ggml-small.bin`, vision releases after `PUJA_KEEP_ALIVE=15m` | same capture in 8.4 s; whisper RSS 1.70 GB → 0.55 GB; `free` available 5.5 GB → 6.2 GB |
+
+The last row is the fix for the reported OOM: `large-v3-turbo` cost **1.7 GB and ~17 s per
+5.5 s clip** on this CPU-only whisper build, against 0.55 GB and ~3 s for small, for the
+same words — the gazetteer repairs the name either way. The grader here is `free -h`: 15 GB
+total with 3.8 GB of swap in use was the symptom, and the two models plus a stale
+`GradleDaemon` (~1 GB) were the cause.
+
+Two things are still unverified and need the volunteer, not the laptop: a capture of a
+**physical** stub held to the camera, and the amount spoken out loud in the intended order
+(1 name, 2 receipt, 3 cash/online, 4 amount) so the voice, not the photo, decides the money.

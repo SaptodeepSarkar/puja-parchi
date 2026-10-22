@@ -106,3 +106,25 @@ fn constant_eq(a: &str, b: &str) -> bool {
 pub fn ok<T: serde::Serialize>(v: T) -> ApiResult<axum::Json<T>> {
     Ok(axum::Json(v))
 }
+
+/// Whether the reading and speech models are actually answering.
+///
+/// Cached for 15 s: the console polls, and a probe on every poll would be rude to
+/// a paid endpoint. `fake` needs no endpoint; `none` is never ready.
+pub(crate) async fn model_readiness(s: &AppState) -> (bool, bool) {
+    if let Some(h) = s.monitor.models(std::time::Duration::from_secs(15)) {
+        return (h.vision, h.stt);
+    }
+    let vision = probe_one(s.vision.name(), &s.cfg.vision_base_url).await;
+    let stt = probe_one(s.stt.name(), &s.cfg.stt_base_url).await;
+    s.monitor.set_models(vision, stt);
+    (vision, stt)
+}
+
+async fn probe_one(provider: &'static str, base_url: &str) -> bool {
+    match provider {
+        "none" => false,
+        "fake" => true,
+        _ => crate::providers::probe(base_url).await,
+    }
+}

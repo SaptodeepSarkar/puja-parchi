@@ -270,17 +270,31 @@ function render(s, isFirst) {
     : '<div class="idle"><span class="dot ok"></span> idle — waiting for the next capture</div>';
 
   /* models */
+  const localUrl = (u) => /^https?:\/\/(127\.0\.0\.1|localhost|192\.168\.|10\.|172\.)/.test(u || '');
   const modelCard = (label, m, emptyNote) => {
-    const badge = m.ready ? '<span class="chip ok">ready</span>' : '<span class="chip">off</span>';
-    if (!m.ready) {
+    const configured = m.provider && m.provider !== 'none';
+    const badge = m.ready
+      ? '<span class="chip ok">ready</span>'
+      : configured
+        ? '<span class="chip warn">not answering</span>'
+        : '<span class="chip">off</span>';
+    if (!configured) {
       return `<div class="row" style="margin-bottom:6px"><b>${label}</b>${badge}</div>
         <div class="dim" style="font-size:12.5px">${esc(emptyNote)}</div>`;
     }
+    // A model on this laptop needs no key; calling that "missing" reads as broken.
+    const key = localUrl(m.base_url)
+      ? '<span class="chip ok">not needed (local)</span>'
+      : m.key ? '<span class="chip ok">set</span>' : '<span class="chip warn">missing</span>';
+    const note = m.ready
+      ? ''
+      : `<div class="dim" style="font-size:12.5px;margin:2px 0 8px">Nothing is answering here - start it with <code>./scripts/models.sh</code></div>`;
     return `<div class="row" style="margin-bottom:8px"><b>${label}</b>${badge}<span class="chip">${esc(m.provider)}</span></div>
+      ${note}
       <div class="kv">
         <span class="k">model</span><span class="v"><code>${esc(m.model)}</code></span>
         <span class="k">endpoint</span><span class="v"><code>${esc(m.base_url)}</code></span>
-        <span class="k">api key</span><span class="v">${m.key ? '<span class="chip ok">set</span>' : '<span class="chip warn">missing</span>'}</span>
+        <span class="k">api key</span><span class="v">${key}</span>
       </div>`;
   };
   $('models').innerHTML =

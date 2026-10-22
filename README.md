@@ -25,6 +25,57 @@ and prints the URLs to use on the phone.
 Defaults: writes to `data/ledger/Durga Puja 2026.xlsx`. To write your live book instead,
 set `PUJA_LEDGER_PATH` (see `.env.example`).
 
+`dev.sh` starts the reading and speech models too, so starting the server also means the
+models are loaded. Set `PUJA_MODELS=off` to skip that (for a cloud provider).
+
+## Local models (no cloud account)
+
+Both models run on the laptop, so the stub and the voice never leave the building.
+
+```bash
+# vision - ollama (already installed for this laptop under ~/.local)
+~/.local/ollama/bin/ollama serve &
+
+# speech - whisper.cpp server, 16 kHz audio in, text out
+~/.local/src/whisper.cpp/build/bin/whisper-server \
+  -m ~/.local/src/whisper.cpp/models/ggml-small.bin \
+  --host 127.0.0.1 --port 8081 --convert \
+  --inference-path /v1/audio/transcriptions -t 8
+```
+
+`./scripts/dev.sh` does the above for you and skips whatever is already running:
+
+```bash
+./scripts/models.sh          # start anything not already up (and keep the model warm)
+./scripts/models.sh status   # what is answering right now
+./scripts/models.sh stop     # stop the ones this script started
+```
+
+The server also probes both endpoints at boot and records the result in the monitor, and
+`/api/health` reports `vision_ready` / `stt_ready`, so "configured but not running" is
+visible on the Setup screen and in the console instead of being discovered at the first
+capture.
+
+### Which model, and why (measured on this laptop)
+
+| | Model where | RAM | Time per capture |
+|---|---|---|---|
+| Vision | `gemma3:4b` on the RTX 3050 (100% GPU) | ~1.1 GB host | ~5 s warm |
+| Speech | `ggml-small.bin` on CPU, 8 threads | ~0.55 GB | ~3 s for a 6 s clip |
+
+Speech is deliberately **small**, not `large-v3-turbo`: on this CPU-only whisper build
+turbo costs **1.7 GB and ~17 s** for a 5.5 s clip, small costs **0.55 GB and ~3 s**, and on
+the real clip both produce the same words ("Atharvasingh 866" vs "Atherv Singh 866") whose
+spelling the name gazetteer repairs anyway. Turbo is 3× slower than realtime — no use at a
+pandal desk. Set `WHISPER_MODEL=…/ggml-large-v3-turbo.bin` if you ever want it.
+
+Together the two models want about **1.7 GB of RAM**. On a 15 GB laptop with a browser
+open, running out is the one thing that makes the whole desk feel broken, so `models.sh`
+warns before it starts if less than 1.5 GB is free. The vision model is released again
+after `PUJA_KEEP_ALIVE` (default `15m`) with no captures, which hands back its 1.1 GB and
+2.9 GB of VRAM. If you are still tight: `pkill -f GradleDaemon` frees the ~1 GB an old
+Android build leaves behind.
+
 ## Phone app (Kotlin)
 
 The phone app is native Android, in `android/`. No browser, no certificate: an app is
@@ -128,13 +179,16 @@ workbook and `data/puja.db` stay the record.
 | `PUJA_TLS` | `on` | `off` disables https (phone mic then won't work) |
 | `PUJA_PIN` | unset | if set, the app demands this PIN (header `x-pin`, or `?pin=` for photos) |
 | `PUJA_VISION_PROVIDER` | `none` | `none` · `openai` · `fake` |
-| `PUJA_VISION_BASE_URL` | `https://api.openai.com/v1` | any OpenAI-compatible endpoint |
+| `PUJA_VISION_BASE_URL` | `https://api.openai.com/v1` | any OpenAI-compatible endpoint; the local ollama is `http://127.0.0.1:11434/v1` |
 | `PUJA_VISION_API_KEY` | unset | provider key |
-| `PUJA_VISION_MODEL` | `gpt-4o-mini` | vision model id |
-| `PUJA_STT_BASE_URL` | same as vision | speech endpoint, when the transcription server is elsewhere |
+| `PUJA_VISION_MODEL` | `gpt-4o-mini` | vision model id (local: `gemma3:4b`) |
+| `PUJA_STT_BASE_URL` | same as vision | speech endpoint, when the transcription server is elsewhere (local: `http://127.0.0.1:8081/v1`) |
 | `PUJA_STT_API_KEY` | same as vision | key for the speech endpoint |
-| `PUJA_STT_MODEL` | `whisper-1` | used only when the browser cannot dictate |
+| `PUJA_STT_MODEL` | `whisper-1` | used only when the browser cannot dictate; whisper.cpp ignores the value |
 | `PUJA_STT_LANGUAGE` | blank (auto) | force a language. Do **not** set `hi`: Whisper then answers in Devanagari, which the number parser cannot read |
+| `PUJA_MODELS` | `on` | `off` stops `dev.sh` from starting the local models |
+| `PUJA_KEEP_ALIVE` | `15m` | how long ollama holds the vision model after the last capture; `0` unloads it immediately |
+| `OLLAMA_BIN`, `OLLAMA_MODELS`, `WHISPER_BIN`, `WHISPER_MODEL`, `WHISPER_THREADS` | `~/.local/...` | where `scripts/models.sh` finds the local model servers |
 
 A model on this machine needs **no key**: `localhost`, `127.0.0.1` and the private ranges
 (`192.168.…`, `10.…`, `172.…`) are accepted without `PUJA_*_API_KEY`.
@@ -142,7 +196,7 @@ A model on this machine needs **no key**: `localhost`, `127.0.0.1` and the priva
 ## Test
 
 ```bash
-./scripts/test.sh          # 67 server tests, app typecheck/unit/build, browser e2e
+./scripts/test.sh          # 69 server tests, app typecheck/unit/build, browser e2e
 ```
 
 The Excel tests copy the real workbook into a temp dir; they never touch your ledger.

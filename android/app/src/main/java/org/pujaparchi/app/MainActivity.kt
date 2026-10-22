@@ -225,22 +225,8 @@ private fun SetupScreen(api: Api, store: Store, onSaved: () -> Unit) {
         health?.let { h ->
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFF1F7F1))) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Vision model", fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (h.vision == "none") "not configured" else h.vision,
-                            color = if (h.vision == "none") Color(0xFF92400E) else Color(0xFF15803D),
-                        )
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Speech model", fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            if (h.stt == "none") "not configured" else h.stt,
-                            color = if (h.stt == "none") Color(0xFF92400E) else Color(0xFF15803D),
-                        )
-                    }
+                    ModelRow("Vision model", h.vision, h.visionReady)
+                    ModelRow("Speech model", h.stt, h.sttReady)
                     Text(if (h.ledgerOk) "Ledger: found" else "Ledger: MISSING")
                     Text(h.ledgerPath, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     h.activeBook?.let { Text("Receipt book: $it", fontWeight = FontWeight.SemiBold) }
@@ -405,4 +391,21 @@ private fun StatusChip(d: Draft) {
         fontSize = 12.sp,
         fontWeight = FontWeight.Medium,
     )
+}
+
+/// One model line on Setup: named when configured, and honest about whether the
+/// model server is actually answering.
+@Composable
+private fun ModelRow(label: String, provider: String, ready: Boolean) {
+    val text = when {
+        provider == "none" -> "not configured"
+        ready -> "$provider · answering"
+        else -> "$provider · not answering"
+    }
+    val colour = if (provider != "none" && ready) Color(0xFF15803D) else Color(0xFF92400E)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(label, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.width(8.dp))
+        Text(text, color = colour)
+    }
 }

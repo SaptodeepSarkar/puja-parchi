@@ -38,12 +38,31 @@ fn same_name(a: &str, b: &str) -> bool {
 /// second opinion, OCR text is kept only as audit evidence.
 pub fn build(book: i64, vision: Option<&VisionOut>, transcript: &str) -> Merged {
     let _ = book;
-    let spoken = speech::parse(transcript);
+    let mut spoken = speech::parse(transcript);
     let mut m = Merged {
         raw_text: vision.map(|v| v.raw_text.clone()).unwrap_or_default(),
         vision_note: vision.map(|v| v.note.clone()).unwrap_or_default(),
         ..Default::default()
     };
+
+    // One bare number with no "receipt" cue: speech calls it the amount. If the
+    // photo shows that same number as the receipt, the volunteer is confirming
+    // the receipt - keeping it as the amount would put the receipt number in the
+    // money column.
+    if spoken.receipt.is_none() {
+        let read_receipt = vision.and_then(|v| v.receipt.as_deref());
+        let read_amount = vision.and_then(|v| v.amount.as_deref());
+        if let (Some(vr), Some(va)) = (read_receipt, read_amount) {
+            if spoken.amount.as_deref() == Some(vr.trim()) && va.trim() != vr.trim() {
+                let said = spoken.amount.take().unwrap_or_default();
+                m.warnings.push(format!(
+                    "you said {said}, which the photo shows as the receipt - the money column uses the photo's Rs {}",
+                    va.trim()
+                ));
+                spoken.receipt = Some(said);
+            }
+        }
+    }
 
     match vision {
         None => m.warnings.push("no vision model configured: fields come from your voice".into()),
@@ -181,5 +200,19 @@ mod tests {
         assert_eq!(m.receipt.number(), Some(852));
         assert!(m.receipt.alternates.iter().any(|a| a.contains("851")));
         assert!(m.warnings.iter().any(|w| w.contains("vision read receipt 851")));
+    }
+
+    #[test]
+    fn lone_number_matching_the_read_receipt_is_not_the_amount() {
+        // Heard "Atharvasingh 866." on a stub whose receipt is 866 and money Rs 201.
+        let mut v = vision();
+        v.receipt = Some("866".into());
+        v.name = Some("ATHARV SINGH".into());
+        v.amount = Some("201".into());
+        let m = build(18, Some(&v), "Atharvasingh 866.");
+        assert_eq!(m.receipt.number(), Some(866));
+        assert_eq!(m.amount.number(), Some(201), "the receipt number must not land in the money column");
+        assert_eq!(m.amount.source, Source::Vision);
+        assert!(m.warnings.iter().any(|w| w.contains("shows as the receipt")));
     }
 }

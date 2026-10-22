@@ -15,4 +15,11 @@ if [ ! -f data/ledger/"Durga Puja 2026.xlsx" ] && [ -z "${PUJA_LEDGER_PATH:-}" ]
   echo
 fi
 
+# The models are part of "start the server": a capture with no model server
+# answering is a wasted stub. Set PUJA_MODELS=off to skip (cloud providers).
+if [ "${PUJA_MODELS:-on}" != "off" ]; then
+  echo "starting the local models…"
+  ./scripts/models.sh up || echo "  (a model is not answering - the server and app will say so)"
+fi
+
 exec cargo run --manifest-path server/Cargo.toml "$@"

@@ -116,14 +116,16 @@ pub async fn snapshot(
         })
         .collect();
 
-    let vision_ready = s.vision.name() != "none";
-    let stt_ready = s.stt.name() != "none";
+    // "ready" means the model server answered, not just that a name is set.
+    let (vision_ready, stt_ready) = super::model_readiness(&s).await;
     let key = s.cfg.vision_api_key.is_some() || s.cfg.stt_api_key.is_some();
-    let model = |ready: bool, id: &str| {
-        if ready {
-            id.to_string()
-        } else {
+    // Show the configured model name even when the server is down, so the card
+    // says which model is not answering.
+    let model = |provider: &str, id: &str| {
+        if provider == "none" {
             "—".to_string()
+        } else {
+            id.to_string()
         }
     };
 
@@ -152,14 +154,14 @@ pub async fn snapshot(
         models: Models {
             vision: Model {
                 provider: s.vision.name(),
-                model: model(vision_ready, &s.cfg.vision_model),
+                model: model(s.vision.name(), &s.cfg.vision_model),
                 base_url: s.cfg.vision_base_url.clone(),
                 key,
                 ready: vision_ready,
             },
             stt: Model {
                 provider: s.stt.name(),
-                model: model(stt_ready, &s.cfg.stt_model),
+                model: model(s.stt.name(), &s.cfg.stt_model),
                 base_url: s.cfg.stt_base_url.clone(),
                 key,
                 ready: stt_ready,

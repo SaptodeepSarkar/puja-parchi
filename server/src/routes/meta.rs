@@ -16,6 +16,9 @@ pub struct Health {
     version: &'static str,
     vision: &'static str,
     stt: &'static str,
+    /// Whether the model server is actually answering right now, not just named.
+    vision_ready: bool,
+    stt_ready: bool,
     ledger_ok: bool,
     ledger_path: String,
     active_book: Option<i64>,
@@ -23,11 +26,14 @@ pub struct Health {
 }
 
 pub async fn health(State(s): State<Arc<AppState>>) -> ApiResult<Json<Health>> {
+    let (vision_ready, stt_ready) = super::model_readiness(&s).await;
     ok(Health {
         ok: true,
         version: env!("CARGO_PKG_VERSION"),
         vision: s.vision.name(),
         stt: s.stt.name(),
+        vision_ready,
+        stt_ready,
         ledger_ok: s.cfg.ledger_path.exists(),
         ledger_path: s.cfg.ledger_path.display().to_string(),
         active_book: s.db.active_book(),

@@ -32,8 +32,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     match state.monitor.ledger() {
-        Some(l) if l.ok => {
-            tracing::info!(
+        Some(l) if l.ok => {            tracing::info!(
                 "ledger ready: {} (sheet {:?}, last row {})",
                 cfg.ledger_path.display(),
                 cfg.ledger_sheet,
@@ -60,6 +59,42 @@ async fn main() -> anyhow::Result<()> {
                 format!("Ledger missing or unreadable · {}", cfg.ledger_path.display()),
                 None,
             );
+        }
+    }
+
+    // A capture with no model server answering is a wasted stub, so say it at
+    // boot instead of letting the first volunteer find out.
+    if cfg.vision_provider == "none" {
+        state.monitor.set_models(false, false);
+        state.monitor.record(
+            Level::Info,
+            "model",
+            "No reading or speech model configured - the voice clip and typing carry the capture",
+            None,
+        );
+    } else {
+        let vision_up = puja_server::providers::probe(&cfg.vision_base_url).await;
+        let stt_up = puja_server::providers::probe(&cfg.stt_base_url).await;
+        state.monitor.set_models(vision_up, stt_up);
+        for (what, up, model, url) in [
+            ("Reading", vision_up, &cfg.vision_model, &cfg.vision_base_url),
+            ("Speech", stt_up, &cfg.stt_model, &cfg.stt_base_url),
+        ] {
+            if up {
+                state.monitor.record(
+                    Level::Ok,
+                    "model",
+                    format!("{what} model answering · {model} · {url}"),
+                    None,
+                );
+            } else {
+                state.monitor.record(
+                    Level::Warn,
+                    "model",
+                    format!("{what} model NOT answering · {url} · start it with ./scripts/models.sh"),
+                    None,
+                );
+            }
         }
     }
 

@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/api.ts","./src/main.tsx","./src/types.ts","./src/lib/format.ts","./src/lib/photo.ts","./src/lib/recorder.ts","./src/screens/Capture.tsx","./src/screens/Recent.tsx","./src/screens/Review.tsx","./src/screens/Settings.tsx"],"version":"5.9.3"}

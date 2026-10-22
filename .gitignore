@@ -1,0 +1,30 @@
+# Donor data, photos, voice clips and the working database. NEVER commit these.
+# The ledger holds real names and amounts, and the CA key is a trust anchor.
+data/
+*.xlsx
+*.db
+*.db-wal
+*.db-shm
+*.jpg
+*.jpeg
+*.png
+*.wav
+*.webm
+!android/app/src/main/res/**/*.png
+!docs/screenshots/**/*.png
+!app/public/**/*.png
+
+# Local machine config and secrets
+.env
+android/local.properties
+
+# Build output
+server/target/
+app/node_modules/
+app/dist/
+android/.gradle/
+android/build/
+android/app/build/
+android/.kotlin/
+*.apk
+*.apks

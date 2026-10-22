@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Puja Parchi</string>
+    <string name="camera_permission">The camera is how a receipt gets in. It needs permission.</string>
+    <string name="mic_permission">The 6-second clip needs the microphone.</string>
+</resources>

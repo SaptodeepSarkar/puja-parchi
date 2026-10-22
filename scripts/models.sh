@@ -14,10 +14,17 @@ OLLAMA_BIN=${OLLAMA_BIN:-$HOME/.local/ollama/bin/ollama}
 OLLAMA_MODELS=${OLLAMA_MODELS:-$HOME/.local/ollama/models}
 VISION_MODEL=${PUJA_VISION_MODEL:-gemma3:4b}
 VISION_URL=${PUJA_VISION_BASE_URL:-http://127.0.0.1:11434/v1}
-WHISPER_BIN=${WHISPER_BIN:-$HOME/.local/src/whisper.cpp/build/bin/whisper-server}
-# ggml-small.bin on purpose: on this CPU-only whisper build it transcribes the
-# same words as large-v3-turbo in ~3 s instead of ~17 s, in ~0.9 GB of RAM
-# instead of ~1.7 GB. The name is repaired by the gazetteer either way.
+WHISPER_BIN=${WHISPER_BIN:-}
+if [ -z "$WHISPER_BIN" ]; then
+  # Prefer the Vulkan build when it is there: 0.2 s per 6 s clip against 3.1 s
+  # for the CPU build, 0.2 GB of RAM instead of 0.7, and the 12 cores stay free
+  # while a volunteer waits. Same words either way.
+  WHISPER_BIN=$HOME/.local/src/whisper.cpp/build-vulkan/bin/whisper-server
+  [ -x "$WHISPER_BIN" ] || WHISPER_BIN=$HOME/.local/src/whisper.cpp/build/bin/whisper-server
+fi
+# ggml-small.bin on purpose: the same words as large-v3-turbo in either build,
+# but 0.78 GB of VRAM instead of 1.8 GB, which leaves the vision model room to
+# live on the same 6 GB card. Speed is no longer the reason.
 WHISPER_MODEL=${WHISPER_MODEL:-$HOME/.local/src/whisper.cpp/models/ggml-small.bin}
 WHISPER_THREADS=${WHISPER_THREADS:-8}
 KEEP_ALIVE=${PUJA_KEEP_ALIVE:-15m}

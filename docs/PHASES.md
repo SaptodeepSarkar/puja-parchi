@@ -132,3 +132,30 @@ total with 3.8 GB of swap in use was the symptom, and the two models plus a stal
 Two things are still unverified and need the volunteer, not the laptop: a capture of a
 **physical** stub held to the camera, and the amount spoken out loud in the intended order
 (1 name, 2 receipt, 3 cash/online, 4 amount) so the voice, not the photo, decides the money.
+
+## Speech moves to the GPU (Vulkan, no CUDA toolkit)
+
+The CPU build spent 3.1 s of a 12-core laptop on every clip. whisper.cpp has a Vulkan
+backend and this machine already had the driver, the loader and `glslc`; only Khronos'
+SPIR-V headers were missing, which needs root as a package but not as a git clone.
+
+| Step | Result |
+|---|---|
+| `cmake -DGGML_VULKAN=ON` | `Found Vulkan: /usr/lib/libvulkan.so (found version "1.4.363") found components: glslc glslangValidator`, then `Could not find SPIRV-Headers` |
+| Headers cloned to `~/.local/src/SPIRV-Headers` + a three-line `SPIRV-HeadersConfig.cmake` stand-in + `-I` in `CMAKE_CXX_FLAGS` | configure and `--target whisper-server` both succeed |
+| Started on a spare port | `ggml_vulkan: 0 = NVIDIA GeForce RTX 3050 6GB … matrix cores: NV_coopmat2v`, `using Vulkan0 backend`, `Vulkan0 total size = 487.01 MB` |
+| Same real clip, warm | **0.21 s** on Vulkan against **3.09 s** on CPU, ~15×; text identical (`Atharvasingh 866.`) |
+| Is it really transcribing? | a 3 s truncation of the same clip returns `Atharvasingh.` in 0.42 s, and the log shows a `processing` line per request — not a cached answer |
+| First request on a *fresh* process | 0.256 s. The 11.7 s first-ever request was the driver compiling SPIR-V once into `~/.nv/ComputeCache` (69 MB), which persists |
+| Both models on the one card | gemma 3.7 GB + whisper 0.78 GB = **4546 / 6144 MiB**, 1.6 GB spare; host RAM for speech drops 0.68 GB → 0.21 GB |
+| `models.sh` prefers it | restart picks `build-vulkan/bin/whisper-server`; `free` available 6.1 GB → 7.5 GB |
+| End to end | capture 8.4 s → **5.6 s**; the console's own event timestamps put speech at **250 ms** against 3136 ms in the CPU-era capture, so vision (5.3 s) is now the entire wait |
+
+`ggml-large-v3-turbo` was measured too, to check whether the earlier reason for choosing
+small still held once the GPU made it fast: it is 0.30 s per clip (fast enough) but 1834 MiB
+of VRAM against small's 781 MiB, which next to gemma's 3742 MiB leaves 0.5 GB instead of 1.6
+GB. Speed stopped being the argument; VRAM is now. Small stays.
+
+The model comparison still rests on this one 5.5 s clip, and the VRAM figures come from a
+single `nvidia-smi` reading on this laptop — worth re-checking if a driver update lands or a
+second GPU-using app appears next to the pandal desk.

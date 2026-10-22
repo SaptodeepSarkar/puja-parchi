@@ -147,10 +147,25 @@ counts as up), keeps pid files in `data/run/`, logs to `data/logs/`, and warns w
 than 1.5 GB of RAM is free. Ollama's model is preloaded with `keep_alive=15m`
 (`PUJA_KEEP_ALIVE`) so a busy spell stays warm and a quiet one gives the RAM back.
 
-Measured on the RTX 3050 / 12-core laptop: `gemma3:4b` 100% GPU, 2.9 GB VRAM, ~1.1 GB host
-RAM, ~5 s per stub warm (96 s cold). Whisper is CPU-only (no `nvcc`): `ggml-small.bin`
-~0.55 GB / ~3 s per 5.5 s clip, `ggml-large-v3-turbo.bin` ~1.7 GB / ~17 s. Small is the
-default for exactly that reason.
+Measured on the RTX 3050 / 12-core laptop, where a volunteer waits for the whole thing, so
+the per-clip number is what matters:
+
+| | Where | VRAM | Host RAM | Per clip |
+|---|---|---|---|---|
+| `gemma3:4b` | RTX 3050, 100% GPU | 3.7 GB | 1.1 GB | 5.3 s |
+| `ggml-small.bin` | RTX 3050, Vulkan backend | 0.78 GB | 0.21 GB | 0.25 s |
+| `ggml-small.bin` | CPU, 8 threads (fallback) | — | 0.68 GB | 3.1 s |
+
+Speech runs on **Vulkan**, not CUDA: there is no CUDA toolkit on this machine, `nvcc` is
+not installed, and whisper.cpp's Vulkan backend needs only the driver, the loader and
+`glslc` — all of which were already present. Only Khronos' SPIR-V headers were missing,
+which is a header-only clone plus a three-line CMake stand-in (`~/.local/cmake/`) because
+the real package needs root. Build recipe in the README. `ggml-small.bin` also fits beside
+gemma on the 6 GB card (4.5 GB of 6.1 GB with both loaded, 1.6 GB spare); `large-v3-turbo`
+would not — its model is 1.83 GB of VRAM against small's 0.78 GB — and that, not speed, is
+why speech stays small now that both models are on the GPU. The CPU build stays in
+`build/bin` as the fallback `models.sh` will pick if the Vulkan one is absent or
+`WHISPER_BIN` overrides it.
 
 ## Testing
 

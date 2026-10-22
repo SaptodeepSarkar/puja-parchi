@@ -36,8 +36,8 @@ Both models run on the laptop, so the stub and the voice never leave the buildin
 # vision - ollama (already installed for this laptop under ~/.local)
 ~/.local/ollama/bin/ollama serve &
 
-# speech - whisper.cpp server, 16 kHz audio in, text out
-~/.local/src/whisper.cpp/build/bin/whisper-server \
+# speech - whisper.cpp server on Vulkan, 16 kHz audio in, text out
+~/.local/src/whisper.cpp/build-vulkan/bin/whisper-server \
   -m ~/.local/src/whisper.cpp/models/ggml-small.bin \
   --host 127.0.0.1 --port 8081 --convert \
   --inference-path /v1/audio/transcriptions -t 8
@@ -58,23 +58,54 @@ capture.
 
 ### Which model, and why (measured on this laptop)
 
-| | Model where | RAM | Time per capture |
-|---|---|---|---|
-| Vision | `gemma3:4b` on the RTX 3050 (100% GPU) | ~1.1 GB host | ~5 s warm |
-| Speech | `ggml-small.bin` on CPU, 8 threads | ~0.55 GB | ~3 s for a 6 s clip |
+| | Where it runs | VRAM | Host RAM | Time per clip |
+|---|---|---|---|---|
+| Vision `gemma3:4b` | RTX 3050, 100% GPU | 3.7 GB | ~1.1 GB | ~5.3 s |
+| Speech `ggml-small.bin` | RTX 3050 via Vulkan | 0.78 GB | 0.21 GB | ~0.25 s |
+| | **both at once** | **4.5 of 6.1 GB** | **~1.3 GB** | **5.6 s end to end** |
 
-Speech is deliberately **small**, not `large-v3-turbo`: on this CPU-only whisper build
-turbo costs **1.7 GB and ~17 s** for a 5.5 s clip, small costs **0.55 GB and ~3 s**, and on
-the real clip both produce the same words ("Atharvasingh 866" vs "Atherv Singh 866") whose
-spelling the name gazetteer repairs anyway. Turbo is 3× slower than realtime — no use at a
-pandal desk. Set `WHISPER_MODEL=…/ggml-large-v3-turbo.bin` if you ever want it.
+Both models live on the one 6 GB card, which is why speech is piped through **Vulkan**
+rather than the CPU: on the CPU it cost 3.1 s of a 12-core laptop's attention per clip and
+0.68 GB of RAM, on the GPU it costs 0.25 s and 0.21 GB. Vision is now the whole wait.
 
-Together the two models want about **1.7 GB of RAM**. On a 15 GB laptop with a browser
-open, running out is the one thing that makes the whole desk feel broken, so `models.sh`
-warns before it starts if less than 1.5 GB is free. The vision model is released again
-after `PUJA_KEEP_ALIVE` (default `15m`) with no captures, which hands back its 1.1 GB and
-2.9 GB of VRAM. If you are still tight: `pkill -f GradleDaemon` frees the ~1 GB an old
-Android build leaves behind.
+Speech stays **small**, not `large-v3-turbo`, but no longer for speed — on the GPU turbo is
+0.30 s too. It is VRAM: turbo's model takes 1.83 GB against small's 0.78 GB, and next to
+gemma's 3.7 GB that leaves 0.5 GB of headroom instead of 1.6 GB. On the real clip both say
+the same words ("Atharvasingh 866" vs "Atherv Singh 866"), and the name gazetteer repairs
+the spelling either way. Set `WHISPER_MODEL=…/ggml-large-v3-turbo.bin` if you want it and
+watch the VRAM.
+
+Together the two models want about **1.3 GB of RAM and 4.5 GB of VRAM**. On a 15 GB laptop
+with a browser open, running out is the one thing that makes the whole desk feel broken, so
+`models.sh` warns before it starts if less than 1.5 GB of RAM is free. The vision model is
+released again after `PUJA_KEEP_ALIVE` (default `15m`) with no captures, which hands back
+its 1.1 GB and 3.7 GB of VRAM. If you are still tight: `pkill -f GradleDaemon` frees the
+~1 GB an old Android build leaves behind.
+
+### Building the Vulkan whisper (once per laptop)
+
+No CUDA toolkit is needed and nothing here wants root — the driver, `glslc` and the Vulkan
+loader are already on this machine; only Khronos' SPIR-V headers were missing, and they are
+a header-only git clone:
+
+```bash
+git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Headers ~/.local/src/SPIRV-Headers
+
+cd ~/.local/src/whisper.cpp
+cmake -B build-vulkan -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON -DGGML_NATIVE=ON \
+  -DGGML_OPENMP=ON -DBUILD_SHARED_LIBS=ON -DWHISPER_BUILD_EXAMPLES=ON \
+  -DWHISPER_BUILD_SERVER=ON \
+  -DSPIRV-Headers_DIR="$HOME/.local/cmake" \
+  -DCMAKE_CXX_FLAGS="-I$HOME/.local/src/SPIRV-Headers/include"
+cmake --build build-vulkan --target whisper-server -j 8
+```
+
+`~/.local/cmake/SPIRV-HeadersConfig.cmake` is a three-line stand-in for the root-only
+`spirv-headers` package: ggml only calls `find_package(SPIRV-Headers CONFIG REQUIRED)` as an
+existence check, so the include path is passed by the flag above. The build prints
+`Found 1 Vulkan devices: 0 = NVIDIA GeForce RTX 3050 6GB` and `using Vulkan0 backend` on
+startup; `models.sh` prefers `build-vulkan/bin/whisper-server` whenever it exists and falls
+back to the CPU build in `build/bin`. The CPU build is kept for exactly that reason.
 
 ## Phone app (Kotlin)
 

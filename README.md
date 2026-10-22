@@ -1,15 +1,15 @@
 # Puja Parchi
 
-Photograph a receipt stub, speak for six seconds, check four fields, push one clean row
-into the Durga Puja ledger. Rust server + installable phone app. Runs on one laptop, on
-the pandal wifi, with no cloud account required.
+Photograph a receipt stub, check four fields, push one clean row into the Durga Puja
+ledger. Rust server + native Android app. Runs on one laptop, on the pandal wifi, with
+no cloud account required.
 
 ```
-phone (PWA)  ──https──►  Rust server  ──►  Durga Puja 2026.xlsx
-                              │
-                              ├──► data/photos/<book>/…
-                              ├──► data/audio/<book>/…
-                              └──► data/puja.db  (drafts + sticky book)
+phone (app / browser) ──►  Rust server  ──►  Durga Puja 2026.xlsx
+                                │
+                                ├──► data/photos/<book>/…
+                                ├──► data/audio/<book>/…   (browser app only)
+                                └──► data/puja.db  (drafts + sticky book)
 ```
 
 ## Quick start (laptop)
@@ -30,7 +30,8 @@ models are loaded. Set `PUJA_MODELS=off` to skip that (for a cloud provider).
 
 ## Local models (no cloud account)
 
-Both models run on the laptop, so the stub and the voice never leave the building.
+The reading model runs on the laptop, so the stub never leaves the building. Speech does too,
+for the browser app that still captures a clip.
 
 ```bash
 # vision - ollama (already installed for this laptop under ~/.local)
@@ -67,6 +68,10 @@ capture.
 Both models live on the one 6 GB card, which is why speech is piped through **Vulkan**
 rather than the CPU: on the CPU it cost 3.1 s of a 12-core laptop's attention per clip and
 0.68 GB of RAM, on the GPU it costs 0.25 s and 0.21 GB. Vision is now the whole wait.
+
+The native app sends the stub and nothing else, so a real capture on it is the vision number
+alone — **4.0 s** measured, against 5.5 s when a six-second clip came with the photo. The
+speech row above is only in play for the browser fallback.
 
 Speech stays **small**, not `large-v3-turbo`, but no longer for speed — on the GPU turbo is
 0.30 s too. It is VRAM: turbo's model takes 1.83 GB against small's 0.78 GB, and next to
@@ -110,8 +115,7 @@ back to the CPU build in `build/bin`. The CPU build is kept for exactly that rea
 ## Phone app (Kotlin)
 
 The phone app is native Android, in `android/`. No browser, no certificate: an app is
-allowed to use the microphone over plain http, so it talks straight to
-`http://<laptop-ip>:8080`.
+allowed to talk to the laptop over plain http, so it uses `http://<laptop-ip>:8080`.
 
 ```bash
 cd android
@@ -124,14 +128,18 @@ the server has one, and tap **Save and test** — it reports the vision model, t
 model and whether the ledger was found. Then set the receipt book number, which stays
 fixed until you change it.
 
-Three things it does that the browser could not:
+**The capture is one photo.** Nothing is spoken: the app asks for the camera and no
+microphone, records nothing, and uploads nothing but the stub. The receipt already has the
+name, the receipt number and the amount written on it, so the vision model reads the paper
+and the review screen is where a human fixes whatever the handwriting cost. One upload, one
+wait, one draft back.
 
-- **One microphone owner.** It records 16 kHz mono WAV and the *server* transcribes it,
-  so there is no second dictation engine to fail quietly.
-- **The speaking order is on screen before the clock starts** — 1 name, 2 receipt number,
-  3 cash or online, 4 amount — each with an example. Nobody has to guess.
-- **One upload, one wait**: photo plus clip go in a single request and the review screen
-  opens with what the vision model read and what was heard.
+That is not how it started — the first version recorded six seconds of speech per receipt,
+with the four values read aloud in order. It was removed on the operator's own evidence
+after three real receipts: the transcripts came back as `'Sunita 86800 cash.'` and
+`'We reigned the Singh 5867'`, a field had to be retyped by hand on two of the three, and
+the numbers that did survive came from the photo anyway. The photo is more accurate and
+about 1.5 s faster, and nobody has to remember an order while a queue waits.
 
 ## Phone (browser fallback)
 
@@ -148,14 +156,33 @@ cannot run the APK.
 
 > The mic only works over HTTPS with a trusted certificate — that is a browser rule, not
 > this app's choice. Without step 2 the app still photographs and lets you type.
+>
+> **The browser app still asks for six seconds of speech**; only the native app dropped it.
+> The server keeps its speech path for this fallback, which is also why whisper.cpp still
+> loads at startup. If nobody uses the browser any more, set `PUJA_MODELS=off` and start the
+> server yourself with `ollama serve` — or leave it, since the fallback is the reason it is
+> there.
 
 ## Screens
+
+The native app's whole capture is one screen — no script, no clock, no microphone:
+
+| Android: capture |
+|---|
+| ![android capture](docs/screenshots/8-android-capture.png) |
+
+The browser app (the fallback) does the same job with six seconds of speech:
 
 | Capture | 6-second voice | Review | Review (bottom) | Pushed |
 |---|---|---|---|---|
 | ![capture](docs/screenshots/1-capture.png) | ![voice](docs/screenshots/2-voice.png) | ![review](docs/screenshots/3-review.png) | ![review bottom](docs/screenshots/3b-review-bottom.png) | ![done](docs/screenshots/4-done.png) |
 
 ## Using it
+
+**Native app** — set the book number, tap the shutter, check the four fields, push. That is
+the whole loop; there is nothing to say out loud.
+
+**Browser app** — the same loop, with a spoken clip as a second reading:
 
 1. **Capture** — tap the big shutter, photograph the stub.
 2. **Speak** — you get 6 seconds, or tap *Stop & use this* early: *name · receipt no ·
@@ -164,8 +191,8 @@ cannot run the APK.
    value came from. Warnings show any disagreement. Fix anything; edits are final.
 4. **Push** — writes one row to the bottom of `CASH `, shows the row number and totals.
 
-Nothing is written to Excel until you tap Push. Photos and voice clips are saved before
-any model sees them.
+Nothing is written to Excel until you tap Push. Photos are saved before any model sees them —
+and so is the clip, in the browser app.
 
 ## Server monitor (laptop)
 
@@ -188,6 +215,12 @@ https://<laptop-ip>:8443/monitor       # from anywhere on the wifi
 - **Event log** — every stage of every capture since the server started, newest first, last
   300 lines: capture → vision → speech → merge → draft → ledger; failures in amber and red.
 - **Models** — the provider and model actually in use, the endpoint, whether an API key is set.
+- **Sheet** — a live preview of the workbook itself: the tail of the real sheet, newest
+  first, with the same six columns as the book (Book, R/No, Name, Cash, Mode, Online).
+  Pre-printed stubs are dimmed, and a row pushed during this run is green — the box scrolls
+  to it, because a push lands in the pre-printed line for its receipt, which can sit many
+  rows above the end of the book. It is re-read when the sheet changes (boot and after each
+  push), not on every poll, so scrolling and selecting are not interrupted.
 - **Ledger, counters, server** — file, sheet, rows, cash/online/total, throughput, average
   model latency, version, pid, listeners, PIN state.
 
@@ -207,7 +240,7 @@ workbook and `data/puja.db` stay the record.
 | `PUJA_LEDGER_SHEET` | `CASH ` | sheet name (trailing space is real) |
 | `PUJA_ADDR` | `0.0.0.0:8080` | http listener |
 | `PUJA_TLS_ADDR` | `0.0.0.0:8443` | https listener |
-| `PUJA_TLS` | `on` | `off` disables https (phone mic then won't work) |
+| `PUJA_TLS` | `on` | `off` disables https (the browser app's mic then won't work) |
 | `PUJA_PIN` | unset | if set, the app demands this PIN (header `x-pin`, or `?pin=` for photos) |
 | `PUJA_VISION_PROVIDER` | `none` | `none` · `openai` · `fake` |
 | `PUJA_VISION_BASE_URL` | `https://api.openai.com/v1` | any OpenAI-compatible endpoint; the local ollama is `http://127.0.0.1:11434/v1` |
@@ -227,7 +260,7 @@ A model on this machine needs **no key**: `localhost`, `127.0.0.1` and the priva
 ## Test
 
 ```bash
-./scripts/test.sh          # 69 server tests, app typecheck/unit/build, browser e2e
+./scripts/test.sh          # 75 server tests, app typecheck/unit/build, browser e2e
 ```
 
 The Excel tests copy the real workbook into a temp dir; they never touch your ledger.
@@ -247,15 +280,17 @@ The Excel tests copy the real workbook into a temp dir; they never touch your le
 
 ## What this is not
 
-Not an APK (no Android SDK here — it is an installable web app instead), not multi-user,
-not an accounting system, and not a handwriting OCR replacement. The volunteer's voice is
-the primary source because OCR on these stubs is genuinely weak; the vision model is a
-second opinion, and every field shows its evidence.
+Not multi-user, not an accounting system, and not a handwriting OCR replacement. There is an
+Android app (`android/`) *and* an installable web app; the app is the one to use.
 
-Voice is the one part that can need the internet: spoken words are transcribed by
-Chrome's own dictation (online) or by the provider you configure. With neither, the
-6-second clip is still saved and you type the four fields — photo, review and push keep
-working with no network at all.
+The handwriting is the honest weak spot: `gemma3:4b` read three real stubs as `ATHARV SINGH`,
+`VIRENDRA SINGH` and `SUNIL` — the last was `SUNITA` — so expect to correct a name now and
+then. Every field shows where its value came from, disagreements between readings are warned,
+and nothing reaches Excel until a human taps Push.
+
+Nothing needs the internet: both models run on the laptop. Only a cloud vision provider, or the
+browser app's Chrome dictation, would go online — with no network at all the photo, the review
+screen and the push still work.
 
 Docs: [PRD](docs/PRD.md) · [flow](docs/FLOW.md) · [stack](docs/STACK.md) ·
 [16 phases](docs/PHASES.md) · [mobile research](docs/research/mobile-capture.md)

@@ -34,6 +34,36 @@ fn same_name(a: &str, b: &str) -> bool {
     names::normalize(a).name == names::normalize(b).name
 }
 
+/// The amount the photo shows, as a plain rupee figure.
+///
+/// Models answer with a currency sign, a decimal, or words - the real stub
+/// carries both "Two hundred one" and "Rs 201" - so the voice parser reads this
+/// text too. Anything that is not a plausible rupee amount is dropped here
+/// rather than trusted with the money column.
+fn vision_amount(vision: Option<&VisionOut>) -> Option<String> {
+    let raw = vision.and_then(|v| v.amount.as_deref())?.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let digits = speech::parse(raw).amount.unwrap_or_else(|| raw.to_string());
+    let n = digits.parse::<i64>().ok().or_else(|| {
+        digits
+            .parse::<f64>()
+            .ok()
+            .filter(|f| f.fract() == 0.0)
+            .map(|f| f as i64)
+    })?;
+    (1..=99_999).contains(&n).then(|| n.to_string())
+}
+
+/// The same money however it was written: "201" and "201.00" are one amount.
+fn same_number(a: &str, b: &str) -> bool {
+    match (a.trim().parse::<i64>(), b.trim().parse::<i64>()) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a.trim() == b.trim(),
+    }
+}
+
 /// Voice beats vision: the volunteer is reading the actual stub. Vision is the
 /// second opinion, OCR text is kept only as audit evidence.
 pub fn build(book: i64, vision: Option<&VisionOut>, transcript: &str) -> Merged {
@@ -112,19 +142,51 @@ pub fn build(book: i64, vision: Option<&VisionOut>, transcript: &str) -> Merged 
         Field::empty(Source::Manual)
     };
 
-    // Amount
-    m.amount = if let Some(a) = &spoken.amount {
-        let mut f = Field::new(a, Source::Voice, 0.95).with_evidence("heard in your voice note");
-        if let Some(v) = vision.and_then(|v| v.amount.as_ref()) {
-            if v.trim() != a.trim() {
-                f.alternates.push(format!("vision: {v}"));
-                m.warnings.push(format!("vision read Rs {v}, you said Rs {a} - using yours"));
+    // Amount. The written stub leads here, unlike every other field: the donor
+    // wrote that number, it is what the book records, and the model is reading
+    // the same paper - so a number said out of order (a receipt number, say)
+    // cannot become the money. The one exception is a photo the model itself
+    // was unsure of, where the volunteer's own reading is the better bet.
+    // Whichever loses is kept as an alternate and the disagreement is reported.
+    let read = vision_amount(vision);
+    let sure = vision.is_some_and(|v| v.confidence >= 0.5);
+    let voice = spoken.amount.clone();
+    // The photo leads unless the model was unsure of its own reading and the
+    // volunteer said something.
+    let photo_leads = match (&read, &voice) {
+        (Some(_), None) => true,
+        (Some(_), Some(_)) => sure,
+        (None, _) => false,
+    };
+    m.amount = if photo_leads {
+        // photo_leads is only true with a reading in hand; an empty string here
+        // would fall back to typing rather than panic mid-request.
+        let v = read.clone().unwrap_or_default();
+        let mut f = Field::new(v.clone(), Source::Vision, vision.map(|v| v.confidence).unwrap_or(0.3))
+            .with_evidence("read by the vision model");
+        match &voice {
+            Some(a) if same_number(&v, a) => {
+                f.evidence.push("your voice note agrees".into());
             }
+            Some(a) => {
+                f.alternates.push(format!("voice: {a}"));
+                m.warnings.push(format!(
+                    "the photo reads Rs {v}, you said Rs {a} - using the photo{}",
+                    if sure { "" } else { ", which the model was unsure about" }
+                ));
+            }
+            None => {}
         }
         f
-    } else if let Some(v) = vision.and_then(|v| v.amount.clone()) {
-        Field::new(v, Source::Vision, vision.map(|v| v.confidence).unwrap_or(0.3))
-            .with_evidence("read by the vision model")
+    } else if let Some(a) = voice {
+        let mut f = Field::new(a.clone(), Source::Voice, 0.95).with_evidence("heard in your voice note");
+        if let Some(v) = read {
+            f.alternates.push(format!("vision: {v}"));
+            m.warnings.push(format!(
+                "the photo's Rs {v} was an unsure read, you said Rs {a} - using yours"
+            ));
+        }
+        f
     } else {
         Field::empty(Source::Manual)
     };
@@ -169,14 +231,67 @@ mod tests {
     }
 
     #[test]
-    fn voice_wins_and_conflict_is_reported() {
+    fn agreeing_readings_raise_no_warning() {
         let spoken = "name suddha dairy receipt number eight five one eleven hundred cash";
         let m = build(18, Some(&vision()), spoken);
         assert_eq!(m.receipt.number(), Some(851));
         assert_eq!(m.amount.number(), Some(1100));
         assert_eq!(m.mode.text(), Some("CASH"));
         assert_eq!(m.name.text(), Some("SUDHA DAIRY"), "gazetteer repairs SUDDHA");
-        assert!(m.warnings.iter().all(|w| !w.contains("receipt 851")), "no false conflict");
+        assert!(m.warnings.is_empty(), "both readings agree: {:?}", m.warnings);
+        assert!(m.amount.evidence.iter().any(|e| e.contains("voice note agrees")));
+    }
+
+    #[test]
+    fn the_photo_decides_the_amount_when_they_disagree() {
+        let mut v = vision();
+        v.amount = Some("700".into());
+        let m = build(18, Some(&v), "receipt number eight five one eleven hundred");
+        assert_eq!(m.amount.number(), Some(700), "the written stub wins");
+        assert_eq!(m.amount.source, Source::Vision);
+        assert!(m.amount.alternates.iter().any(|a| a.contains("1100")), "the voice is kept");
+        assert!(m.warnings.iter().any(|w| w.contains("using the photo")));
+    }
+
+    #[test]
+    fn an_unsure_photo_loses_the_amount_to_the_voice() {
+        let mut v = vision();
+        v.amount = Some("700".into());
+        v.confidence = 0.4;
+        let m = build(18, Some(&v), "receipt number eight five one eleven hundred");
+        assert_eq!(m.amount.number(), Some(1100));
+        assert_eq!(m.amount.source, Source::Voice);
+        assert!(m.amount.alternates.iter().any(|a| a.contains("700")));
+        assert!(m.warnings.iter().any(|w| w.contains("unsure read")));
+    }
+
+    #[test]
+    fn a_photo_amount_in_words_is_read_too() {
+        // The real stub says "the sum of rupees Two hundred one" as well as Rs 201.
+        let mut v = vision();
+        v.amount = Some("Two hundred one".into());
+        let m = build(18, Some(&v), "");
+        assert_eq!(m.amount.number(), Some(201));
+        assert_eq!(m.amount.source, Source::Vision);
+    }
+
+    #[test]
+    fn a_worthless_photo_amount_never_reaches_the_money_column() {
+        for junk in ["", "0", "100000", "not a number", "Rs"] {
+            let mut v = vision();
+            v.amount = Some(junk.into());
+            let m = build(18, Some(&v), "receipt number eight five one eleven hundred");
+            assert_eq!(m.amount.number(), Some(1100), "junk {junk:?} must not win");
+            assert_eq!(m.amount.source, Source::Voice);
+        }
+    }
+
+    #[test]
+    fn a_decimal_photo_amount_is_still_a_rupee_figure() {
+        let mut v = vision();
+        v.amount = Some("201.00".into());
+        let m = build(18, Some(&v), "");
+        assert_eq!(m.amount.number(), Some(201));
     }
 
     #[test]

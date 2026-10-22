@@ -159,3 +159,67 @@ GB. Speed stopped being the argument; VRAM is now. Small stays.
 The model comparison still rests on this one 5.5 s clip, and the VRAM figures come from a
 single `nvidia-smi` reading on this laptop — worth re-checking if a driver update lands or a
 second GPU-using app appears next to the pandal desk.
+
+## Three real receipts, and the speech came out
+
+The first three real captures happened on the phone with the voice pipeline. They are the
+evidence for the biggest change since:
+
+| # | Receipt | Transcript | Corrected by hand |
+|---|---|---|---|
+| 1 | 866 | `Atharva Singh 866201 cash` | nothing — name from the voice, **amount from the photo (₹201)** |
+| 2 | 867 | `We reigned the Singh 5867 501 cash` | the name (typed); the voice did carry ₹501 |
+| 3 | 868 | `Sunita 86800 cash.` | the amount (typed) — the voice glued receipt and money into `86800` |
+
+The clip needed a human correction on two of three, and every number that survived the
+transcript had come from the photo anyway. `ggml-small` is not a reliable number reader, and
+the stub already has the values written on it.
+
+**The app speaks no more.** It asks for the camera and not the microphone, uploads one photo,
+and shows the four fields for review.
+
+| Change | Verified by |
+|---|---|
+| `CaptureScreen` photographs and uploads; `Recorder.kt` deleted; `RECORD_AUDIO` gone from the manifest | `./gradlew assembleDebug` clean, installed with adb, screen shows one camera button and book 18 — no script, no clock, no mic prompt |
+| `Api.capture(image, book, client_id)` — no audio part | photo-only POST to `/api/capture`: `receipt 866 vision · name ATHARV SINGH vision · amount 201 vision · mode CASH vision`, no warnings, **4.0 s** against 5.5 s with a clip |
+| The server keeps its speech path for the browser fallback | `audio` + `transcript` are still accepted; the PWA still records 6 s, and the README says which client does what |
+
+What that costs: a handwritten name now leans on the OCR alone. On these three the photo read
+`VIRENDRA SINGH` and `ATHARV SINGH` correctly where the voice managed `We reigned the Singh`,
+and it read `SUNITA` as `SUNIL`, which the reviewer fixed — the same one-field-per-receipt
+correction rate, without the speaking.
+
+## The amount follows the paper
+
+The stub is what the book records and the model is reading the same paper, so the photo's
+amount now leads instead of the voice's, with the one exception of a read the model was itself
+unsure of (confidence < 0.5). Whatever loses is kept in `alternates[]` and the disagreement is
+warned, never silent.
+
+| Change | Verified by |
+|---|---|
+| `vision_amount()` reads digits, `201.00`, `Rs 201` and words through the speech parser, then range-checks `1..=99_999` | 6 new unit tests: photo wins a disagreement, an unsure photo loses to the voice, `Two hundred one` → `201`, `201.00` → `201`, and `""`/`0`/`100000`/prose are dropped rather than written into the money column |
+| End to end through HTTP | `a_preprinted_stub_is_filled_instead_of_duplicated` now asserts cell D = the photo's `1100` over the spoken `51` — the old assertion pinned the opposite rule |
+| The real stub | photo-only capture returns `amount 201 · source vision` |
+
+## The console shows the sheet
+
+The Sheet card in `/monitor` is a preview of the workbook itself: the tail of the real sheet,
+newest first, same six columns as the book, pre-printed stubs dimmed, a row pushed during this
+run green. It is re-read when the sheet changes (boot and after a push) rather than on every
+1.2 s poll, so scrolling and text selection are not interrupted.
+
+Verified on a **copy** of the workbook (a second server on `:8091`, its own data dir); the live
+book was never written to by any of this.
+
+| Change | Verified by |
+|---|---|
+| `ledger::preview(path, sheet, n, keep)` reads the tail in one pass through `umya-spreadsheet` | unit test: 30 rows ending at the last row, contiguous, `5000` stops at row 2 and never at the header |
+| Two flaws found and fixed while verifying: the window missed the pushed row when it landed above the tail, and the green row sat below the fold | push into the pre-printed line for receipt 869 → window extended `281..310` → `277..310`; screenshot shows row 277 green and the box scrolled to it |
+| `LedgerInfo.preview` on the snapshot | push on the copy: `committed [(277, '869')]`, `window rows 277..310`, header `rows 277–310 of the sheet, newest first · green = added this run` |
+
+The `keep` parameter exists because of the book's shape: a push fills the pre-printed line for
+its receipt, and those lines sit many rows above the end of the sheet — further than any fixed
+window. The Ledger card's own `rows` figure is the row a push just wrote, which is a different
+number after a fill, so the Sheet card's header counts from the preview's own last row instead.
+

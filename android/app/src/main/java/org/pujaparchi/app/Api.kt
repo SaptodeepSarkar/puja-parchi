@@ -202,16 +202,12 @@ class Api(private val store: Store) {
         )
     }
 
-    /** One receipt: photo + the 6-second clip. The server does the reading. */
-    fun capture(image: File, audio: File?, transcript: String, book: Long, clientId: String): Draft {
+    /** One photo, one request. Nothing is spoken, so nothing is uploaded but the stub. */
+    fun capture(image: File, book: Long, clientId: String): Draft {
         val form = MultipartBody.Builder().setType(MultipartBody.FORM)
             .addFormDataPart("image", "receipt.jpg", image.asRequestBody("image/jpeg".toMediaType()))
-            .addFormDataPart("transcript", transcript)
             .addFormDataPart("book", book.toString())
             .addFormDataPart("client_id", clientId)
-        if (audio != null && audio.length() > 0) {
-            form.addFormDataPart("audio", "voice.wav", audio.asRequestBody("audio/wav".toMediaType()))
-        }
         val body = form.build()
         return draft(JSONObject(exec(req("/api/capture").post(body))))
     }

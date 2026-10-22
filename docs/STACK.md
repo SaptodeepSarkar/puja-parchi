@@ -37,14 +37,14 @@ for config (env vars), Docker (the target is one laptop, not a fleet).
 | GET | `/api/health` | version, provider names, `vision_ready`/`stt_ready`, ledger path/presence, sticky book |
 | GET | `/api/book` | current book + recently used |
 | POST | `/api/book` | set the sticky book `{book}` |
-| POST | `/api/capture` | multipart: `image` (required), `audio`, `transcript`, `book`, `client_id` → `Draft` |
+| POST | `/api/capture` | multipart: `image` (required), `book`, `client_id` → `Draft`. `audio` and `transcript` are optional and only the browser app sends them. |
 | GET | `/api/drafts?limit=` | newest drafts (pending + committed) |
 | GET | `/api/draft/{id}` | one draft |
 | PATCH | `/api/draft/{id}` | reviewer corrections `{receipt,name,amount,mode,book}` |
 | POST | `/api/draft/{id}/confirm` | append to Excel → `{draft,row,totals}` |
 | POST | `/api/draft/{id}/reject` | discard a pending draft |
 | GET | `/api/stats` | today's totals + whole-sheet totals |
-| GET | `/api/monitor?since=` | ops console snapshot: server, models, counters, in-flight jobs, new events, recent rows |
+| GET | `/api/monitor?since=` | ops console snapshot: server, models, counters, in-flight jobs, new events, recent rows, `ledger.preview` (the sheet tail) |
 | GET | `/monitor` | the laptop console page (open; every number behind it is PIN-guarded) |
 | GET | `/ca.crt` | the local CA, for the phone's one-time trust install |
 | GET | `/media/...` | photos and audio |
@@ -71,6 +71,31 @@ append under the last used row → verify in memory →
 backup (keep 10) → write temp → rename → re-read totals. Pinned by a test against a copy
 of the real file (`server/src/ledger.rs`).
 
+### Which reading wins
+
+Every field comes from the photo first, the reviewer can override anything, and whatever loses
+is kept in `alternates[]` with a `warning` naming both readings. Two rules are worth stating:
+
+**The written stub leads on the amount**, unlike every other field, because a receipt number
+said next to the money was easy to take for the money — one real capture put ₹866 in the cash
+column of a ₹201 stub. So:
+
+- photo reads Rs 700, you said Rs 1100 → **700 wins**, 1100 kept as the alternate, warned.
+- the model was unsure of its own read (confidence < 0.5) and you said something → **your
+  number wins**, the photo kept as the alternate, warned (`... was an unsure read`).
+- the photo's amount is not a plausible rupee figure (`0`, `100000`, `Rs`, prose) → dropped
+  before it can reach the money column.
+- both agree → no warning at all, and the evidence says so.
+
+`vision_amount()` accepts digits, `201.00`, `Rs 201` and words (`Two hundred one` — the real
+stub writes it both ways) through the same parser the speech path uses, then range-checks
+`1..=99_999`.
+
+**Nothing is inferred from the photo that is not on it.** The book number is chosen before the
+capture and never read off the stub; a blank payment mode is cash; `ONLINE` and `Sheet3` are
+never touched, nothing is sorted or renumbered, and a receipt that already exists in the sheet
+is refused rather than duplicated — a pre-printed line is filled in place instead.
+
 ## App
 
 | Concern | Choice | Why |
@@ -95,9 +120,9 @@ server-side).
 | Language / UI | Kotlin + Jetpack Compose | A real app was asked for; Compose gives four screens without XML. |
 | Transport | OkHttp + `org.json` | Multipart upload and the server's own JSON, no codegen and no Moshi. |
 | Camera | CameraX `ImageCapture` | Preview plus a JPEG the server can read; no intent round-trip. |
-| Microphone | `AudioRecord` → 16 kHz mono **WAV** | Every speech model takes WAV without a converter, and one process owns the mic. |
-| Dictation | none — the clip goes to the server | Two live mic users is how the browser version silently heard nothing. |
-| Transport security | plain `http://<laptop>:8080` | The mic-needs-https rule is a *browser* rule; an app is exempt, so no CA install. |
+| Capture | one photo, nothing spoken | The stub already carries the name, the receipt number and the amount. Three real receipts showed the clip was the least accurate part of the pipeline, so it went. |
+| Permissions | `CAMERA`, `INTERNET`, `ACCESS_NETWORK_STATE` | No `RECORD_AUDIO` and no mic code: the app has nothing to record. |
+| Transport security | plain `http://<laptop>:8080` | Same wifi, LAN only, and one phone to install on — a CA round-trip buys nothing here. |
 | Signing | debug keystore | Installed from adb onto the pandal phone; not a store release. |
 | Finish-build | `./gradlew assembleDebug` | Only toolchain requirement: JDK 17 + Android SDK (`android-35`, `build-tools 35.0.0`). |
 
@@ -170,7 +195,7 @@ why speech stays small now that both models are on the GPU. The CPU build stays 
 ## Testing
 
 ```
-server:  54 unit tests + 15 API integration tests (real xlsx copy, fake provider)
+server:  60 unit tests + 15 API integration tests (real xlsx copy, fake provider)
 app:     vitest helpers, tsc --noEmit, vite build
 e2e:     Playwright, real browser: photo → 6 s screen → stop → review → push → row 311
 android: ./gradlew assembleDebug  (JDK 17 + Android SDK), installed with adb

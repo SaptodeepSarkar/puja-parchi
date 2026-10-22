@@ -24,7 +24,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -40,7 +39,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -51,7 +49,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -59,19 +56,19 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
-private enum class Stage { Aim, Ready, Recording, Sending }
+private enum class Stage { Aim, Sending }
 
 /**
- * Photo, then six seconds of speech, then straight to review.
+ * The whole capture: photograph the stub, and the server reads it.
  *
- * The ordered script is on screen *before* the clock starts, because a
- * volunteer who has not been told what to say says one word and stops.
+ * Nothing is spoken. The written stub has the name, the receipt number and the
+ * amount on it already, so the vision model reads the paper and the review
+ * screen is where a human fixes whatever handwriting cost.
  */
 @Composable
 fun CaptureScreen(
@@ -82,68 +79,40 @@ fun CaptureScreen(
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
-    val recorder = remember { VoiceRecorder(ctx) }
 
     var stage by remember { mutableStateOf(Stage.Aim) }
-    var photo by remember { mutableStateOf<File?>(null) }
     var thumb by remember { mutableStateOf<Bitmap?>(null) }
-    var clientId by remember { mutableStateOf("") }
-    var left by remember { mutableIntStateOf(SECONDS) }
     var error by remember { mutableStateOf<String?>(null) }
     var status by remember { mutableStateOf("") }
 
-    var allowed by remember { mutableStateOf(hasCamera(ctx) && hasMic(ctx)) }
-    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        allowed = hasCamera(ctx) && hasMic(ctx)
+    var allowed by remember { mutableStateOf(hasCamera(ctx)) }
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        allowed = hasCamera(ctx)
     }
-    LaunchedEffect(Unit) {
-        if (!allowed) ask.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
-    }
+    LaunchedEffect(Unit) { if (!allowed) ask.launch(Manifest.permission.CAMERA) }
 
-    val send: () -> Unit = {
-        scope.launch {
-            val clip = withContext(Dispatchers.IO) { recorder.stop() }
-            val picture = photo
-            if (picture == null) {
-                error = "No photo to send."
-                stage = Stage.Ready
-            } else if (book == null) {
-                error = "Set the receipt book number first."
-                stage = Stage.Ready
-            } else {
+    val send: (File) -> Unit = { picture ->
+        if (book == null) {
+            error = "Set the receipt book number first."
+        } else {
+            scope.launch {
+                error = null
                 stage = Stage.Sending
-                status = "Reading the stub and listening to the clip…"
+                status = "Reading the stub…"
                 try {
                     val draft = withContext(Dispatchers.IO) {
-                        api.capture(picture, clip, "", book, clientId)
+                        api.capture(picture, book, UUID.randomUUID().toString())
                     }
                     status = ""
+                    stage = Stage.Aim
+                    thumb = null
                     onDraft(draft)
                 } catch (e: Exception) {
                     error = e.message ?: "The server refused the capture."
                     status = ""
-                    stage = Stage.Ready
+                    stage = Stage.Aim
                 }
             }
-        }
-    }
-
-    // The clock. Runs once per recording, and only the clock ends a recording.
-    LaunchedEffect(stage) {
-        if (stage == Stage.Recording) {
-            try {
-                withContext(Dispatchers.IO) { recorder.start() }
-            } catch (e: Exception) {
-                error = e.message
-                stage = Stage.Ready
-                return@LaunchedEffect
-            }
-            left = SECONDS
-            while (left > 0) {
-                delay(1000)
-                left -= 1
-            }
-            send()
         }
     }
 
@@ -179,150 +148,47 @@ fun CaptureScreen(
         if (!allowed) {
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF6E5))) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("The camera and the microphone are both needed.", fontWeight = FontWeight.SemiBold)
-                    Text("The photo is how the receipt gets in; the 6-second clip is how the numbers get in.")
-                    Button(onClick = {
-                        ask.launch(arrayOf(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO))
-                    }) { Text("Allow camera and mic") }
+                    Text("The camera is needed.", fontWeight = FontWeight.SemiBold)
+                    Text("The photo of the stub is the whole capture — nothing is spoken.")
+                    Button(onClick = { ask.launch(Manifest.permission.CAMERA) }) { Text("Allow the camera") }
                 }
             }
         }
 
-        when (stage) {
-            Stage.Aim -> {
-                Text("Photograph the stub", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Lay the stub flat, fill the frame. This photo is what the server reads.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                CameraBox(
-                    enabled = allowed && book != null,
-                    onPicture = { file ->
-                        photo = file
-                        clientId = UUID.randomUUID().toString()
-                        thumb = null
-                        error = null
-                        scope.launch {
-                            thumb = withContext(Dispatchers.IO) { downscale(file) }
-                        }
-                        stage = Stage.Ready
-                    },
-                    onError = { error = it },
-                )
-                if (book == null) {
-                    Text(
-                        "Choose the receipt book number before the first capture — it is never read off the photo.",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            }
-
-            Stage.Ready, Stage.Recording, Stage.Sending -> {
-                thumb?.let {
-                    Image(
-                        it.asImageBitmap(),
-                        contentDescription = "the stub you just photographed",
-                        modifier = Modifier
-                            .height(120.dp)
-                            .clip(RoundedCornerShape(10.dp)),
-                    )
-                }
-
-                OrderedScript()
-
-                when (stage) {
-                    Stage.Ready -> {
-                        Button(
-                            onClick = { error = null; stage = Stage.Recording },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp),
-                        ) { Text("Start the 6 seconds", fontSize = 17.sp) }
-                        Text(
-                            "You get six seconds to say all four. Tap stop when you finish early.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-
-                    Stage.Recording -> {
-                        Text("Say them now — $left", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                        LinearProgressIndicator(
-                            progress = { (SECONDS - left).toFloat() / SECONDS },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedButton(
-                            onClick = { left = 0 },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(52.dp),
-                        ) { Text("Stop — I have said everything") }
-                        Text(
-                            "It is listening. Do not hang up the words: name, receipt, mode, amount.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-
-                    else -> {
-                        Text("Working…", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                        Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-
-                if (stage == Stage.Ready) {
-                    OutlinedButton(onClick = {
-                        photo = null
-                        thumb = null
-                        error = null
-                        stage = Stage.Aim
-                    }) { Text("Retake the photo") }
-                }
-            }
-        }
-    }
-}
-
-/**
- * The part that was missing: what to say, in which order, with an example.
- * Nobody is born knowing this.
- */
-@Composable
-private fun OrderedScript() {
-    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7EC))) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Say it in this order", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-            ScriptLine("1", "Name", "Sudha Dairy")
-            ScriptLine("2", "Receipt number", "nine five zero one")
-            ScriptLine("3", "Cash or online", "cash")
-            ScriptLine("4", "Amount", "eleven hundred")
+        if (stage == Stage.Aim) {
+            Text("Photograph the stub", fontWeight = FontWeight.SemiBold)
             Text(
-                "Four things, one after another, in one breath. Then stop.",
-                color = Color(0xFF7A4A12),
-                fontWeight = FontWeight.Medium,
-            )
-        }
-    }
-}
-
-@Composable
-private fun ScriptLine(n: String, what: String, said: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            Modifier
-                .size(24.dp)
-                .clip(RoundedCornerShape(50))
-                .background(Color(0xFF7F1D1D)),
-            contentAlignment = Alignment.Center,
-        ) { Text(n, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp) }
-        Spacer(Modifier.width(10.dp))
-        Column {
-            Text(what, fontWeight = FontWeight.SemiBold)
-            Text(
-                "say: \"$said\"",
+                "Lay the stub flat, fill the frame, keep your shadow off it. The whole stub is what the server reads.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 13.sp,
             )
+            CameraBox(
+                enabled = allowed && book != null,
+                onPicture = { file ->
+                    thumb = null
+                    scope.launch { thumb = withContext(Dispatchers.IO) { downscale(file) } }
+                    send(file)
+                },
+                onError = { error = it },
+            )
+            if (book == null) {
+                Text(
+                    "Choose the receipt book number before the first capture — it is never read off the photo.",
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        } else {
+            thumb?.let {
+                Image(
+                    it.asImageBitmap(),
+                    contentDescription = "the stub you just photographed",
+                    modifier = Modifier
+                        .height(180.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                )
+            }
+            Text("Working…", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -380,15 +246,10 @@ private fun CameraBox(enabled: Boolean, onPicture: (File) -> Unit, onError: (Str
     }
 }
 
-private const val SECONDS = 6
-
 private fun hasCamera(ctx: Context) =
     ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
 
-private fun hasMic(ctx: Context) =
-    ContextCompat.checkSelfPermission(ctx, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-/** Keeps a 12 MP stub from being decoded at full size just to draw 120 dp. */
+/** Keeps a 12 MP stub from being decoded at full size just to draw 180 dp. */
 private fun downscale(file: File): Bitmap? {
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     BitmapFactory.decodeFile(file.absolutePath, bounds)

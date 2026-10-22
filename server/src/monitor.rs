@@ -81,7 +81,13 @@ pub struct LedgerState {
     pub online: i64,
     pub total: i64,
     pub at: String,
+    /// The tail of the sheet, for the console's preview.
+    pub sheet: Vec<crate::ledger::SheetRow>,
 }
+
+/// How many rows of the sheet the console previews. Enough to see the row that
+/// just landed and the pre-printed stubs it landed among.
+pub const PREVIEW_ROWS: u32 = 30;
 
 /// Whether the model servers were actually answering when last checked.
 #[derive(Debug, Clone, Serialize)]
@@ -186,7 +192,7 @@ impl Monitor {
         f(&mut self.metrics.lock().unwrap_or_else(|e| e.into_inner()));
     }
 
-    pub fn set_ledger(&self, ok: bool, rows: u32, totals: Totals) {
+    pub fn set_ledger(&self, ok: bool, rows: u32, totals: Totals, sheet: Vec<crate::ledger::SheetRow>) {
         *self.ledger.lock().unwrap_or_else(|e| e.into_inner()) = Some(LedgerState {
             ok,
             rows,
@@ -194,6 +200,7 @@ impl Monitor {
             online: totals.online,
             total: totals.total,
             at: chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, false),
+            sheet,
         });
     }
 
@@ -322,7 +329,7 @@ mod tests {
             c.vision_ms += 420;
             c.pushes += 1;
         });
-        m.set_ledger(true, 311, Totals { cash: 121_654, online: 26_226, total: 147_880 });
+        m.set_ledger(true, 311, Totals { cash: 121_654, online: 26_226, total: 147_880 }, Vec::new());
         let (_, _, _, metrics) = m.snapshot(0);
         assert_eq!(metrics.captures, 1);
         assert_eq!(metrics.vision_ms, 420);

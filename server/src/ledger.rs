@@ -168,6 +168,46 @@ pub fn last_data_row(path: &Path, sheet: &str) -> Result<u32> {
     Ok(last_row_of(get_sheet(&book, path, sheet)?))
 }
 
+/// One row of the sheet as the console previews it - columns A..F, nothing else.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SheetRow {
+    pub row: u32,
+    pub book: Option<i64>,
+    pub receipt: String,
+    pub name: String,
+    pub cash: Option<i64>,
+    pub mode: String,
+    pub online: Option<i64>,
+}
+
+/// The last `n` rows carrying anything in A..F, in sheet order, and always
+/// including `keep` when that row falls outside the window.
+///
+/// `keep` exists because a push lands in the pre-printed line for its receipt,
+/// which can sit many rows above the end of the book - further than `n` rows,
+/// so the row that was just written would otherwise drop out of the preview.
+///
+/// Called only at boot and after a push, so one more parse of the workbook is
+/// cheaper than keeping a second copy of the book in memory and having it drift.
+pub fn preview(path: &Path, sheet: &str, n: u32, keep: Option<u32>) -> Result<Vec<SheetRow>> {
+    let book = read_book(path)?;
+    let sheet = get_sheet(&book, path, sheet)?;
+    let last = last_row_of(sheet);
+    let window = last.saturating_sub(n.saturating_sub(1));
+    let first = window.min(keep.unwrap_or(window)).max(2);
+    Ok((first..=last)
+        .map(|r| SheetRow {
+            row: r,
+            book: sheet.value_number((1, r)).map(|v| v.round() as i64),
+            receipt: sheet.value((2, r)).trim().to_string(),
+            name: sheet.value((3, r)).trim().to_string(),
+            cash: sheet.value_number((4, r)).map(|v| v.round() as i64),
+            mode: sheet.value((5, r)).trim().to_string(),
+            online: sheet.value_number((6, r)).map(|v| v.round() as i64),
+        })
+        .collect())
+}
+
 fn read_book(path: &Path) -> Result<Workbook> {
     if !path.exists() {
         bail!("ledger file not found: {}", path.display());
@@ -446,6 +486,37 @@ mod tests {
         assert_eq!(t.cash, 121_654);
         assert_eq!(t.online, 26_226);
         assert_eq!(t.total, 147_880);
+    }
+
+    #[test]
+    fn preview_reads_the_tail_and_never_the_header() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("book.xlsx");
+        std::fs::copy(real_ledger(), &path).unwrap();
+        let sheet = "CASH ";
+        let last = last_data_row(&path, sheet).unwrap();
+
+        // The real book's tail is the pre-printed block for book 18, then row 310.
+        let rows = preview(&path, sheet, 30, None).unwrap();
+        assert_eq!(rows.len(), 30, "asked for 30 rows");
+        assert_eq!(rows.first().unwrap().row, last - 29, "ends at the last row");
+        assert_eq!(rows.last().unwrap().row, last);
+        assert!(rows.windows(2).all(|w| w[1].row == w[0].row + 1), "in sheet order, no gaps");
+
+        // More than the sheet holds stops at row 2, never at the header in row 1.
+        let all = preview(&path, sheet, 5000, None).unwrap();
+        assert_eq!(all.first().unwrap().row, 2, "row 1 is the header");
+        assert_eq!(all.last().unwrap().row, last);
+
+        // A row written further up - a pre-printed line - stays in the window.
+        let kept = preview(&path, sheet, 5, Some(last - 40)).unwrap();
+        assert_eq!(kept.first().unwrap().row, last - 40);
+        assert_eq!(kept.last().unwrap().row, last, "the tail is still there");
+
+        // A pre-printed stub: book and receipt set, nothing else yet.
+        let wait = rows.iter().find(|r| r.name.is_empty() && r.cash.is_none()).unwrap();
+        assert_eq!(wait.book, Some(18), "pre-printed book column");
+        assert!(wait.receipt.parse::<i64>().is_ok(), "receipt as the sheet shows it");
     }
 
     #[test]

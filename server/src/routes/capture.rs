@@ -466,7 +466,12 @@ pub async fn confirm(State(s): State<Arc<AppState>>, Path(id): Path<String>) -> 
         )));
     }
     s.monitor.count(|m| m.pushes += 1);
-    s.monitor.set_ledger(s.cfg.ledger_path.exists(), appended.row, appended.totals);
+    // The preview is re-read from the file rather than taken from the write, so
+    // the console shows the row where Excel actually put it - a pre-printed
+    // stub line, not always the last one.
+    let sheet = crate::ledger::preview(&s.cfg.ledger_path, &s.cfg.ledger_sheet, crate::monitor::PREVIEW_ROWS, Some(appended.row))
+        .unwrap_or_default();
+    s.monitor.set_ledger(s.cfg.ledger_path.exists(), appended.row, appended.totals, sheet);
     s.monitor.record(
         Level::Ok,
         "ledger",

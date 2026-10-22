@@ -64,6 +64,8 @@ struct LedgerInfo {
     online: i64,
     total: i64,
     at: Option<String>,
+    /// The tail of the sheet, newest last, exactly as Excel holds it.
+    preview: Vec<crate::ledger::SheetRow>,
 }
 
 #[derive(Serialize)]
@@ -149,7 +151,8 @@ pub async fn snapshot(
             cash: ledger.as_ref().map_or(0, |l| l.cash),
             online: ledger.as_ref().map_or(0, |l| l.online),
             total: ledger.as_ref().map_or(0, |l| l.total),
-            at: ledger.map(|l| l.at),
+            at: ledger.as_ref().map(|l| l.at.clone()),
+            preview: ledger.map_or_else(Vec::new, |l| l.sheet),
         },
         models: Models {
             vision: Model {

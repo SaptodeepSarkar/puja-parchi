@@ -118,6 +118,18 @@
   td a:hover { text-decoration: underline; }
   tr.empty td { color: var(--dim); border-top: 0; }
 
+  /* sheet preview */
+  .sheet { max-height: 380px; overflow: auto; position: relative; }
+  .sheet table { font-size: 12.5px; }
+  .sheet thead th { position: sticky; top: 0; z-index: 1; background: var(--panel); padding: 3px 8px 6px 0; }
+  .sheet td { padding: 5px 8px 5px 0; white-space: nowrap; }
+  .sheet td.name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+  /* a pre-printed stub: book and receipt printed, nothing written yet */
+  tr.waiting td { color: #6a5c4e; }
+  /* added during this run */
+  tr.fresh td { background: #14301f; }
+  tr.fresh td.row-no { color: var(--green); font-weight: 700; }
+
   /* metrics */
   .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; font-size: 13px; }
   .metrics .m { display: flex; justify-content: space-between; gap: 10px; border-bottom: 1px dotted #2a2420; padding-bottom: 5px; }
@@ -190,6 +202,11 @@
     </section>
 
     <section class="card">
+      <h2>Sheet <span class="hint" id="sheet-hint">newest first</span></h2>
+      <div id="sheet" class="sheet"></div>
+    </section>
+
+    <section class="card">
       <h2>Event log <span class="hint">newest first · last 300 since the server started</span></h2>
       <div id="log" class="log"><div class="idle"><span class="dot"></span> waiting for the first event…</div></div>
     </section>
@@ -241,6 +258,7 @@ if (pin) localStorage.setItem(KEY, pin);
 if (params.has('pin')) history.replaceState(null, '', location.pathname);
 
 let since = 0, first = true, running = 0, unreachable = false, timer = null;
+let sheetStamp = null; // when the sheet was last re-read, so the preview is not rebuilt every poll
 
 const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const money = (n) => '₹' + new Intl.NumberFormat('en-IN').format(Number(n || 0));
@@ -316,6 +334,45 @@ function render(s, isFirst) {
       <div><div class="lab">online</div><div class="num">${money(l.online)}</div></div>
       <div><div class="lab">total</div><div class="num">${money(l.total)}</div></div>
     </div>`;
+
+  /* sheet preview: the real tail of the workbook, newest at the top so the row
+     that just landed is always the first thing in the box. Re-rendered only
+     when the sheet was re-read, so scrolling and selecting are not reset every
+     poll. */
+  const p = l.preview || [];
+  if (l.at !== sheetStamp) {
+    sheetStamp = l.at;
+    const fresh = new Set(s.committed.map((r) => Number(r.row)));
+    // The preview always ends at the last row of the book, so its own last row
+    // is the honest total here - the Ledger card's `rows` is the row a push
+    // just wrote, which is a different number after a pre-printed fill.
+    $('sheet-hint').textContent = p.length
+      ? `rows ${p[0].row}–${p[p.length - 1].row} of the sheet, newest first${fresh.size ? ' · green = added this run' : ''}`
+      : 'newest first';
+    $('sheet').innerHTML = p.length
+      ? `<table>
+        <thead><tr><th>Row</th><th>Book</th><th>R/No</th><th>Name</th><th class="num">Cash</th><th>Mode</th><th class="num">Online</th></tr></thead>
+        <tbody>${p.slice().reverse().map((r) => {
+          const waiting = !r.name && r.cash == null && r.online == null;
+          const cls = fresh.has(Number(r.row)) ? ' class="fresh"' : (waiting ? ' class="waiting"' : '');
+          return `<tr${cls}>
+            <td class="row-no">${r.row}</td>
+            <td>${r.book == null ? '' : r.book}</td>
+            <td>${esc(r.receipt)}</td>
+            <td class="name">${esc(r.name)}</td>
+            <td class="num">${r.cash == null ? '' : money(r.cash)}</td>
+            <td>${r.mode ? `<span class="chip ${r.mode.toUpperCase() === 'CASH' ? '' : 'ok'}">${esc(r.mode)}</span>` : ''}</td>
+            <td class="num">${r.online == null ? '' : money(r.online)}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`
+      : '<div class="idle"><span class="dot"></span> the sheet could not be read</div>';
+    // A push can land in a pre-printed line well above the newest row, so bring
+    // the row that was just written into view instead of leaving it off-screen.
+    const box = $('sheet');
+    const freshRow = box.querySelector('tr.fresh');
+    if (freshRow) box.scrollTop = Math.max(0, freshRow.offsetTop - box.clientHeight / 2);
+  }
 
   /* counters */
   const m = s.metrics;

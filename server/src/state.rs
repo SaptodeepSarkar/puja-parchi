@@ -28,10 +28,14 @@ impl AppState {
             match crate::ledger::last_data_row(&cfg.ledger_path, &cfg.ledger_sheet)
                 .and_then(|rows| Ok((rows, crate::ledger::totals(&cfg.ledger_path, &cfg.ledger_sheet)?)))
             {
-                Ok((rows, totals)) => monitor.set_ledger(true, rows, totals),
+                Ok((rows, totals)) => {
+                    let sheet = crate::ledger::preview(&cfg.ledger_path, &cfg.ledger_sheet, crate::monitor::PREVIEW_ROWS, None)
+                        .unwrap_or_default();
+                    monitor.set_ledger(true, rows, totals, sheet)
+                }
                 Err(e) => {
                     tracing::warn!("ledger exists but could not be read at startup: {e:#}");
-                    monitor.set_ledger(false, 0, Totals::default());
+                    monitor.set_ledger(false, 0, Totals::default(), Vec::new());
                 }
             }
         }

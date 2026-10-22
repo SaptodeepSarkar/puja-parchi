@@ -149,20 +149,11 @@ fun ReviewScreen(
             )
         }
 
-        if (d.transcript.isNotBlank()) {
-            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF7EC))) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("You said", fontWeight = FontWeight.SemiBold)
-                    Text(d.transcript)
-                }
-            }
-        } else {
-            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF6E5))) {
-                Text(
-                    "No words were heard on the clip. Type the four values below.",
-                    Modifier.padding(12.dp),
-                )
-            }
+        Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF6E5))) {
+            Text(
+                "These four come from the photo. Fix anything the handwriting cost.",
+                Modifier.padding(12.dp),
+            )
         }
 
         ValueField("Receipt number", receipt, d.receipt) { receipt = it }
@@ -271,7 +262,6 @@ private fun ValueField(label: String, value: String, field: Field, onChange: (St
 @Composable
 private fun SourceBadge(field: Field) {
     val (label, colour) = when (field.source) {
-        "voice" -> "heard" to Color(0xFF1D4ED8)
         "vision" -> "read" to Color(0xFF6D28D9)
         "namedb" -> "spelling" to Color(0xFF0F766E)
         "manual" -> "typed" to Color(0xFF6B7280)

@@ -351,7 +351,10 @@ async fn a_preprinted_stub_is_filled_instead_of_duplicated() {
     .await;
     assert_eq!(status, StatusCode::OK, "{draft}");
     assert_eq!(draft["receipt"]["value"], "890");
-    assert_eq!(draft["amount"]["value"], "51");
+    // The written stub leads on money now: the fixed demo photo reads Rs 1100,
+    // so the volunteer's spoken "fifty one" is kept as an alternate, not used.
+    assert_eq!(draft["amount"]["value"], "1100");
+    assert_eq!(draft["amount"]["source"], "vision");
 
     let id = draft["id"].as_str().unwrap();
     let (status, done) = send(
@@ -366,7 +369,7 @@ async fn a_preprinted_stub_is_filled_instead_of_duplicated() {
     let ws = book.sheet_by_name("CASH ").unwrap();
     let at = |c: u32| ws.cell((c, 297)).map(|x| x.value().to_string()).unwrap_or_default();
     assert_eq!(at(3), draft["name"]["value"].as_str().unwrap());
-    assert_eq!(at(4), "51");
+    assert_eq!(at(4), "1100", "the photo's Rs 1100, not the spoken 51");
     assert_eq!(at(5), "CASH");
     assert_eq!(at(6), "", "online column must stay empty");
 }
